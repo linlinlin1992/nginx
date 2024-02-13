@@ -1,5 +1,5 @@
-# Use alpine as base image
-FROM alpine:latest
+# Use debian as base image
+FROM debian:stretch
 
 # Define who maintains this Dockerfile
 LABEL maintainer="Your Name"
