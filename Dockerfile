@@ -15,7 +15,7 @@ RUN apt-get update && \
     libssl-dev
 
 # Define ENVs
-ENV NGINX_VERSION=1.21.0
+ENV NGINX_VERSION=1.25.3
 
 # Get Nginx source
 WORKDIR /tmp
