@@ -1,42 +1,78 @@
-# Define the base image
-FROM debian:stretch
+FROM nginx:%%NGINX_VERSION%%-alpine-slim
 
-# Define who maintains the Dockerfile
-MAINTAINER Your Name
+ENV NJS_VERSION   %%NJS_VERSION%%
 
-# Install necessary packages
-RUN apt-get update && \
-    apt-get install -y \
-    wget \
-    build-essential \
-    libpcre3 \
-    libpcre3-dev \
-    zlib1g-dev \
-    libssl-dev
-
-# Define ENVs
-ENV NGINX_VERSION=1.25.3
-
-# Get Nginx source
-WORKDIR /tmp
-RUN wget http://nginx.org/download/nginx-$NGINX_VERSION.tar.gz && \
-    tar -xf nginx-$NGINX_VERSION.tar.gz && \
-    rm -rf nginx-$NGINX_VERSION.tar.gz
-
-# Configure Nginx with the specific modules
-WORKDIR /tmp/nginx-$NGINX_VERSION
-RUN ./configure --with-stream --with-stream_ssl_preread_module --with-http_ssl_module --with-http_v2_module --with-http_realip_module && \
-    make && make install
-
-# Clean up
-RUN apt-get remove --auto-remove -y \
-    wget \
-    build-essential \
-    libpcre3-dev zlib1g-dev libssl-dev && \
-    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
-
-# Expose ports
-EXPOSE 80
-
-# Define the running command
-CMD ["/usr/local/nginx/sbin/nginx", "-g", "daemon off;"]
+RUN set -x \
+    && apkArch="$(cat /etc/apk/arch)" \
+    && nginxPackages="%%PACKAGES%%
+    " \
+# install prerequisites for public key and pkg-oss checks
+    && apk add --no-cache --virtual .checksum-deps \
+        openssl \
+    && case "$apkArch" in \
+        x86_64|aarch64) \
+# arches officially built by upstream
+            set -x \
+            && KEY_SHA512="e09fa32f0a0eab2b879ccbbc4d0e4fb9751486eedda75e35fac65802cc9faa266425edf83e261137a2f4d16281ce2c1a5f4502930fe75154723da014214f0655" \
+            && wget -O /tmp/nginx_signing.rsa.pub https://nginx.org/keys/nginx_signing.rsa.pub \
+            && if echo "$KEY_SHA512 */tmp/nginx_signing.rsa.pub" | sha512sum -c -; then \
+                echo "key verification succeeded!"; \
+                mv /tmp/nginx_signing.rsa.pub /etc/apk/keys/; \
+            else \
+                echo "key verification failed!"; \
+                exit 1; \
+            fi \
+            && apk add -X "%%PACKAGEREPO%%v$(egrep -o '^[0-9]+\.[0-9]+' /etc/alpine-release)/main" --no-cache $nginxPackages \
+            ;; \
+        *) \
+# we're on an architecture upstream doesn't officially build for
+# let's build binaries from the published packaging sources
+            set -x \
+            && tempDir="$(mktemp -d)" \
+            && chown nobody:nobody $tempDir \
+            && apk add --no-cache --virtual .build-deps \
+                gcc \
+                libc-dev \
+                make \
+                openssl-dev \
+                pcre2-dev \
+                zlib-dev \
+                linux-headers \
+                libxslt-dev \
+                gd-dev \
+                geoip-dev \
+                libedit-dev \
+                bash \
+                alpine-sdk \
+                findutils \
+            && su nobody -s /bin/sh -c " \
+                export HOME=${tempDir} \
+                && cd ${tempDir} \
+                && curl -f -O https://hg.nginx.org/pkg-oss/archive/%%REVISION%%.tar.gz \
+                && PKGOSSCHECKSUM=\"%%PKGOSSCHECKSUM%% *%%REVISION%%.tar.gz\" \
+                && if [ \"\$(openssl sha512 -r %%REVISION%%.tar.gz)\" = \"\$PKGOSSCHECKSUM\" ]; then \
+                    echo \"pkg-oss tarball checksum verification succeeded!\"; \
+                else \
+                    echo \"pkg-oss tarball checksum verification failed!\"; \
+                    exit 1; \
+                fi \
+                && tar xzvf %%REVISION%%.tar.gz \
+                && cd pkg-oss-%%REVISION%% \
+                && cd alpine \
+                && make %%BUILDTARGET%% \
+                && apk index -o ${tempDir}/packages/alpine/${apkArch}/APKINDEX.tar.gz ${tempDir}/packages/alpine/${apkArch}/*.apk \
+                && abuild-sign -k ${tempDir}/.abuild/abuild-key.rsa ${tempDir}/packages/alpine/${apkArch}/APKINDEX.tar.gz \
+                " \
+            && cp ${tempDir}/.abuild/abuild-key.rsa.pub /etc/apk/keys/ \
+            && apk del --no-network .build-deps \
+            && apk add -X ${tempDir}/packages/alpine/ --no-cache $nginxPackages \
+            ;; \
+    esac \
+# remove checksum deps
+    && apk del --no-network .checksum-deps \
+# if we have leftovers from building, let's purge them (including extra, unnecessary build deps)
+    && if [ -n "$tempDir" ]; then rm -rf "$tempDir"; fi \
+    && if [ -f "/etc/apk/keys/abuild-key.rsa.pub" ]; then rm -f /etc/apk/keys/abuild-key.rsa.pub; fi \
+    && if [ -f "/etc/apk/keys/nginx_signing.rsa.pub" ]; then rm -f /etc/apk/keys/nginx_signing.rsa.pub; fi \
+# Bring in curl and ca-certificates to make registering on DNS SD easier
+    && apk add --no-cache curl ca-certificates
