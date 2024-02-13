@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:experimental
-ARG NGINX_VERSION
+ARG NGINX_VERSION=latest
 FROM nginx:${NGINX_VERSION} as build
 
 RUN apt-get update && \
