@@ -9,6 +9,7 @@ env:
   IMAGE_NAME: my-nginx  
   DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
   DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+  NGINX_VERSION: latest
 
 jobs:
   build:
